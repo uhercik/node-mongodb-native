@@ -4,6 +4,9 @@
 
 [![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/mongodb/node-mongodb-native?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 
+# About this fork
+This fork was made because I needed GridStore option storage for Geo cluster to save files in particular country, due to legislative
+
 # Description
 
 The MongoDB driver is the high level part of the 2.0 or higher MongoDB driver and is meant for end users.
@@ -289,7 +292,7 @@ var findDocuments = function(db, callback) {
 }
 ```
 
-This query will return all the documents in the **documents** collection. Since we deleted a document the total 
+This query will return all the documents in the **documents** collection. Since we deleted a document the total
 documents returned is **2**. Finally let's add the findDocument method to the **MongoClient.connect** callback.
 
 ```js

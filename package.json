@@ -1,6 +1,6 @@
 {
   "name": "@gti/mongodb",
-  "version": "2.0.48",
+  "version": "2.0.49",
   "description": "MongoDB legacy driver emulation layer on top of mongodb-core",
   "main": "index.js",
   "repository": {

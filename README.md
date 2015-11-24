@@ -5,7 +5,8 @@
 [![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/mongodb/node-mongodb-native?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 
 # About this fork
-This fork was made because I needed GridStore option storage for Geo cluster to save files in particular country, due to legislative
+This fork was made because We needed GridStore option storage for Geo cluster to save files in particular country, due to legislative
+New options are storage and hash. If hash is used it will replace md5 from mongo by provided hash. It is needed to be used when gridfs chunks collection is not sharded on index {files_id:1} or {files_id:1, n:1}
 
 # Description
 

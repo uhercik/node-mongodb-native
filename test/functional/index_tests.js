@@ -817,3 +817,209 @@ exports['should correctly pass partialIndexes through to createIndexCommand'] = 
     });
   }
 }
+
+/**
+ * @ignore
+ */
+exports['should not retry partial index expression error'] = {
+  metadata: {
+    requires: { topology: ['single', 'replicaset', 'sharded'],
+    mongodb: ">=3.1.8" }
+  },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
+    db.open(function(error, db) {
+      test.equal(error, null);
+      // Can't use $exists: false in partial filter expression, see
+      // https://jira.mongodb.org/browse/SERVER-17853
+      var opts = { partialFilterExpression: { a: { $exists: false } } };
+      db.collection('partialIndexes').createIndex({a:1}, opts, function(err) {
+        test.ok(err);
+        test.equal(err.code, 67);
+        var msg = "key $exists must not start with '$'";
+        test.ok(err.toString().indexOf(msg) === -1);
+
+        db.close();
+        test.done();
+      });
+    });
+  }
+}
+
+/**
+ * @ignore
+ */
+exports['should correctly error out due to driver close'] = {
+  metadata: { requires: { topology: ['single'] } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
+    db.open(function(err, db) {
+      db.close(function() {
+        db.createCollection('nonexisting', {w:1}, function(err, collection) {
+          test.ok(err != null);
+          db.collection('nonexisting', {strict: true}, function(err, collection) {
+            test.ok(err != null);
+            db.collection('nonexisting', {strict: false}, function(err, collection) {
+              test.ok(err != null);
+              test.done();
+            });
+          });
+        });
+      });
+    });
+  }
+}
+
+/**
+ * @ignore
+ */
+exports['should correctly create index on embedded key'] = {
+  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
+    db.open(function(err, db) {
+      test.equal(null, err);
+      var collection = db.collection('embedded_key_indes');
+
+      collection.insertMany([{
+        a: { a: 1}
+      }, {
+        a: { a: 2}
+      }], function(err, r) {
+        test.equal(null, err);
+
+        collection.ensureIndex({'a.a':1}, function(err, indexName) {
+          test.equal(null, err);
+          db.close();
+          test.done();
+        });
+      })
+    });
+  }
+}
+
+/**
+ * @ignore
+ */
+exports['should correctly create index using . keys'] = {
+  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
+    db.open(function(err, db) {
+      test.equal(null, err);
+      var collection = db.collection('embedded_key_indes_1');
+      collection.createIndex(
+          { 'key.external_id': 1, 'key.type': 1 },
+          { unique: true, sparse: true, name: 'indexname'},
+      function(err, r) {
+        test.equal(null, err);
+
+        db.close();
+        test.done();
+      });
+    });
+  }
+}
+
+/**
+ * @ignore
+ */
+exports['error on duplicate key index'] = {
+  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
+    db.open(function(err, db) {
+      test.equal(null, err);
+      var collection = db.collection('embedded_key_indes_2');
+      collection.insertMany([{
+        key: { external_id: 1, type: 1}
+      }, {
+        key: { external_id: 1, type: 1}
+      }], function(err, r) {
+        test.equal(null, err);
+        collection.createIndex(
+            { 'key.external_id': 1, 'key.type': 1 },
+            { unique: true, sparse: true, name: 'indexname'},
+        function(err, r) {
+          test.equal(11000, err.code);
+
+          db.close();
+          test.done();
+        });
+      });
+    });
+  }
+}
+
+// /**
+//  * @ignore
+//  */
+// exports['should correctly return all indexes'] = {
+//   metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+
+//   // The actual test we wish to run
+//   test: function(configuration, test) {
+//     var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
+//     db.open(function(err, db) {
+//       db.createCollection('test_drop_indexes', function(err, collection) {
+//         collection.insert({a:1}, configuration.writeConcernMax(), function(err, ids) {
+//           // Create an index on the collection
+//           db.createIndex(collection.collectionName, 'a', configuration.writeConcernMax(), function(err, indexName) {
+//             test.equal("a_1", indexName);
+
+//             collection.indexes(function(err, indexes) {
+//               console.log("-----------------------------------------------")
+//               console.dir(err)
+//               console.dir(indexes)
+
+//               db.close();
+//               test.done();
+//             });
+
+//             // // Drop all the indexes
+//             // collection.dropAllIndexes(function(err, result) {
+//             //   test.equal(true, result);
+
+//             //   collection.indexInformation(function(err, result) {
+//             //     test.ok(result['a_1'] == null);
+//             //     db.close();
+//             //     test.done();
+//             //   })
+//             // })
+//           });
+//         })
+//       });
+//     });
+//   }
+// }
+
+/**
+ * @ignore
+ */
+exports['should correctly create Index with sub element'] = {
+  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
+    db.open(function(err, db) {
+      // insert a doc
+      db.collection('messed_up_index').createIndex({ temporary: 1, 'store.addressLines': 1, lifecycleStatus: 1 }, configuration.writeConcernMax(), function(err, r) {
+        test.equal(null, err);
+
+        db.close();
+        test.done();
+      });
+    });
+  }
+}

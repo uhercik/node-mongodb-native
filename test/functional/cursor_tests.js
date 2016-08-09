@@ -360,50 +360,6 @@ exports.shouldCorrectlyExecuteSortOnCursor = {
   }
 }
 
-// /**
-//  * @ignore
-//  * @api private
-//  */
-// exports.shouldCorrectlyThrowErrorOnToArrayWhenMissingCallback = {
-//   // Add a tag that our runner can trigger on
-//   // in this case we are setting that node needs to be higher than 0.10.X to run
-//   metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
-
-//   // The actual test we wish to run
-//   test: function(configuration, test) {
-//     var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
-//     db.open(function(err, db) {
-//       db.createCollection('test_to_array', function(err, collection) {
-//         function insert(callback) {
-//           var total = 10;
-
-//           for(var i = 0; i < 10; i++) {
-//             collection.insert({'x':i}, configuration.writeConcernMax(), function(e) {
-//               total = total - 1;
-//               if(total == 0) callback();
-//             });
-//           }
-//         }
-
-//         function finished() {
-//           collection.find(function(err, cursor) {
-//             test.throws(function () {
-//               cursor.toArray();
-//             });
-
-//             db.close();
-//             test.done();
-//           });
-//         }
-
-//         insert(function() {
-//           finished();
-//         });
-//       });
-//     });
-//   }
-// }
-
 /**
  * @ignore
  * @api private
@@ -1214,14 +1170,13 @@ exports.shouldCorrectlyRefillViaGetMoreCommand = {
     db.open(function(err, db) {
       db.createCollection('test_refill_via_get_more', function(err, collection) {
         function insert(callback) {
-          var total = COUNT;
+          var docs = [];
 
           for(var i = 0; i < COUNT; i++) {
-            collection.insert({'a':i}, configuration.writeConcernMax(), function(e) {
-              total = total - 1;
-              if(total == 0) callback();
-            });
+            docs.push({a:i});
           }
+
+          collection.insertMany(docs, configuration.writeConcernMax(), callback);
         }
 
         function finished() {
@@ -1290,14 +1245,13 @@ exports.shouldCorrectlyRefillViaGetMoreAlternativeCollection = {
         var COUNT = 1000;
 
         function insert(callback) {
-          var total = COUNT;
+          var docs = [];
 
           for(var i = 0; i < COUNT; i++) {
-            collection.insert({'a':i}, configuration.writeConcernMax(), function(e) {
-              total = total - 1;
-              if(total == 0) callback();
-            });
+            docs.push({a:i});
           }
+
+          collection.insertMany(docs, configuration.writeConcernMax(), callback);
         }
 
         function finished() {
@@ -1741,7 +1695,7 @@ exports['destroying a stream stops it'] = {
 exports['cursor stream errors'] = {
   // Add a tag that our runner can trigger on
   // in this case we are setting that node needs to be higher than 0.10.X to run
-  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+  metadata: { requires: { topology: ['single'] } },
 
   // The actual test we wish to run
   test: function(configuration, test) {
@@ -1766,8 +1720,13 @@ exports['cursor stream errors'] = {
           var stream = collection.find({}, { batchSize: 5 }).stream();
 
           stream.on('data', function (doc) {
-            if (++i === 5) {
-              client.close();
+            // console.dir(doc)
+            if (++i === 4) {
+              // console.log("---------- data 0")
+              // Force restart
+              configuration.manager.stop(9).then(function() {
+                // console.log("---------- data 1")
+              });
             }
           });
 
@@ -1777,6 +1736,8 @@ exports['cursor stream errors'] = {
 
           function done (e) {
             return function(err) {
+              // console.log("---- done")
+              // console.dir(err)
               ++finished;
 
               if(finished == 2) {
@@ -1784,7 +1745,10 @@ exports['cursor stream errors'] = {
                   test.equal(5, i);
                   test.equal(true, stream.isClosed());
                   client.close();
-                  test.done();
+
+                  configuration.manager.start().then(function() {
+                    test.done();
+                  });
                 }, 150)
               }
             }
@@ -1936,45 +1900,73 @@ exports.shouldCloseDeadTailableCursors = {
 
       var options = { capped: true, size: 10000000 };
       db.createCollection('test_if_dead_tailable_cursors_close', options, function(err, collection) {
+        // console.log("---------------------------------- 0")
         test.equal(null, err);
         var closed = false;
-        var stream = collection.find({}, { tailable: true }).stream();
+        // console.log("---------------------------------- 1")
 
+        var count = 100;
         // Just hammer the server
-        for(var i = 0; i < 1000; i++) {
-          collection.insert({id: i});
+        for(var i = 0; i < 100; i++) {
+          collection.insert({id: i}, {w:'majority', wtimeout: 5000}, function(err, r) {
+            // console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!! INSERTED")
+            // console.dir(err)
+            // if(r) console.dir(r)
+            // console.log("-- insert " + (err == null));
+            // if(err) console.log(err.stack)
+            count = count - 1;
+
+            if(count == 0) {
+              // console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!! INSERTED")
+              var stream = collection.find({}, { tailable: true, awaitData: true }).stream();
+              // console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!! INSERTED")
+              // global.debug = true
+              var index = 0;
+
+              stream.on('data', function (doc) {
+                // console.log("doc :: " + (index++));
+              });
+
+              stream.on('error', function (err) {
+                // console.log("== error")
+                // console.dir(err)
+                test.ok(err != null);
+              });
+
+              stream.on('end', function () {
+                // console.log("== end")
+                closed = true;
+              });
+
+              stream.on('close', function () {
+                // console.log("== close")
+                closed = true;
+              });
+
+              // Just hammer the server
+              for(var i = 0; i < 100; i++) {
+                process.nextTick(function() {
+                  collection.insert({id: i}, function(err) {
+                    // console.log("-- insert push " + (err == null));
+                    // if(err) console.log(err.stack)
+                  });
+                });
+              }
+
+              // console.log("---------------------------------- 2")
+              setTimeout(function () {
+                // console.log("---------------------------------- 3")
+                db.close();
+
+                setTimeout(function() {
+                  // console.log("---------------------------------- 4")
+                  test.equal(true, closed);
+                  test.done();
+                }, 5000)
+              }, 800);
+            }
+          });
         }
-
-        stream.on('data', function (doc) {
-        });
-
-        stream.on('error', function (err) {
-          test.ok(err != null);
-        });
-
-        stream.on('end', function () {
-          closed = true;
-        });
-
-        stream.on('close', function () {
-          closed = true;
-        });
-
-        // Just hammer the server
-        for(var i = 0; i < 10000; i++) {
-          process.nextTick(function() {
-            collection.insert({id: i});
-          })
-        }
-
-        setTimeout(function () {
-          db.close();
-
-          setTimeout(function() {
-            test.equal(true, closed);
-            test.done();
-          }, 1000)
-        }, 800);
       });
     });
   }
@@ -1998,11 +1990,16 @@ exports.shouldAwaitData = {
       db.createCollection('should_await_data', options, function(err, collection) {
         collection.insert({a:1}, configuration.writeConcernMax(), function(err, result) {
           var s = new Date();
+
           // Create cursor with awaitdata, and timeout after the period specified
-          collection.find({}, {tailable:true, awaitdata:true, numberOfRetries:1}).each(function(err, result) {
+          var cursor = collection.find({}, {tailable:true, awaitdata:true});
+          // Execute each
+          cursor.each(function(err, result) {
+            if(result) {
+              cursor.kill();
+            }
+
             if(err != null) {
-              var e = new Date();
-              test.ok((e.getTime() - s.getTime()) > 1000);
               db.close();
               test.done();
             }
@@ -2030,13 +2027,13 @@ exports.shouldAwaitDataWithDocumentsAvailable = {
       var options = { capped: true, size: 8};
       db.createCollection('should_await_data_no_docs', options, function(err, collection) {
         // Create cursor with awaitdata, and timeout after the period specified
-        var cursor = collection.find({}, {tailable:true, awaitdata:true, numberOfRetries:1});
+        var cursor = collection.find({}, {tailable:true, awaitdata:true});
         var rewind = cursor.rewind;
         var called = false;
         cursor.rewind = function() {
           called = true;
         }
-        
+
         cursor.each(function(err, result) {
           if(err != null) {
             test.ok(called);
@@ -2069,16 +2066,16 @@ exports.shouldAwaitDataUsingCursorFlag = {
         collection.insert({a:1}, configuration.writeConcernMax(), function(err, result) {
           var s = new Date();
           // Create cursor with awaitdata, and timeout after the period specified
-          var cursor = collection.find({}, {numberOfRetries:1});
+          var cursor = collection.find({}, {});
           cursor.addCursorFlag('tailable', true)
           cursor.addCursorFlag('awaitData', true)
           cursor.each(function(err, result) {
-              if(err != null) {
-                var e = new Date();
-                test.ok((e.getTime() - s.getTime()) > 1000);
-                db.close();
-                test.done();
-              }
+            if(err != null) {
+              db.close();
+              test.done();
+            } else {
+              cursor.kill();
+            }
           });
         });
       });
@@ -2086,35 +2083,40 @@ exports.shouldAwaitDataUsingCursorFlag = {
   }
 }
 
-/**
- * @ignore
- */
-exports.shouldNotAwaitDataWhenFalse = {
-  // Add a tag that our runner can trigger on
-  // in this case we are setting that node needs to be higher than 0.10.X to run
-  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
-
-  // The actual test we wish to run
-  test: function(configuration, test) {
-    // NODE-98
-    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1, auto_reconnect:false});
-
-    db.open(function(err, db) {
-      var options = { capped: true, size: 8};
-      db.createCollection('should_not_await_data_when_false', options, function(err, collection) {
-        collection.insert({a:1}, configuration.writeConcernMax(), function(err, result) {
-          // should not timeout
-          collection.find({}, {tailable:true, awaitdata:false}).each(function(err, result) {
-            test.ok(err != null);
-          });
-
-          db.close();
-          test.done();
-        });
-      });
-    });
-  }
-}
+// /**
+//  * @ignore
+//  */
+// exports.shouldNotAwaitDataWhenFalse = {
+//   // Add a tag that our runner can trigger on
+//   // in this case we are setting that node needs to be higher than 0.10.X to run
+//   metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+//
+//   // The actual test we wish to run
+//   test: function(configuration, test) {
+//     // NODE-98
+//     var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1, auto_reconnect:false});
+//
+//     db.open(function(err, db) {
+//       var options = { capped: true, size: 8};
+//       db.createCollection('should_not_await_data_when_false', options, function(err, collection) {
+//         collection.insert({a:1}, configuration.writeConcernMax(), function(err, result) {
+//           console.log("------------ 0")
+//           // should not timeout
+//           collection.find({}, {tailable:true, awaitdata:false}).each(function(err, result) {
+//             console.log("------------ 2")
+//             console.dir(err)
+//             console.dir(result)
+//             test.ok(err != null);
+//           });
+//           console.log("------------ 1")
+//
+//           db.close();
+//           test.done();
+//         });
+//       });
+//     });
+//   }
+// }
 
 /**
  * @ignore
@@ -2135,12 +2137,13 @@ exports['Should correctly retry tailable cursor connection'] = {
         collection.insert({a:1}, configuration.writeConcernMax(), function(err, result) {
           var s = new Date();
           // Create cursor with awaitdata, and timeout after the period specified
-          collection.find({}, {tailable:true, awaitdata:true, numberOfRetries:3, tailableRetryInterval:1000}).each(function(err, result) {
+          var cursor = collection.find({}, {tailable:true, awaitdata:true});
+          cursor.each(function(err, result) {
             if(err != null) {
-              var e = new Date();
-              test.ok((e.getTime() - s.getTime()) >= 3000);
               db.close();
               test.done();
+            } else {
+              cursor.kill();
             }
           });
         });
@@ -2685,6 +2688,8 @@ exports['Should report database name and collection name'] = {
         test.equal(null, err);
         test.equal('myCollection', cursor.namespace.collection);
         test.equal('integration_tests', cursor.namespace.database);
+
+        db.close();
         test.done();
       });
     });
@@ -3037,17 +3042,6 @@ exports['Should correctly apply skip and limit to large set of documents'] = {
 
   // The actual test we wish to run
   test: function(configuration, test) {
-    // var docs = [];
-    //
-    // for(var i = 0; i < 4000) {
-    //
-    // }
-
-    // for(var i = 0; i < 1000; i++) {
-    //   var d = new Date().getTime() + i*1000;
-    //   docs[i] = {'a':i, createdAt:new Date(d)};
-    // }
-    //
     var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
     db.open(function(err, db) {
       test.equal(null, err);
@@ -3073,25 +3067,93 @@ exports['Should correctly apply skip and limit to large set of documents'] = {
           test.done();
         });
       });
+    });
+  }
+}
 
-      // // insert all docs
-      // collection.insert(docs, configuration.writeConcernMax(), function(err, result) {
-      //   test.equal(null, err);
-      //   var total = 0;
-      //
-      //   // Create a cursor for the content
-      //   var cursor = collection.find({})
-      //     .map(function(x) { return {a:1}; })
-      //     .batchSize(5)
-      //     .limit(10);
-      //   cursor.forEach(function(doc) {
-      //     test.equal(1, doc.a);
-      //   }, function(err, doc) {
-      //     test.equal(null, err);
-      //     db.close();
-      //     test.done();
-      //   });
-      // })
+/**
+ * @ignore
+ */
+exports['should tail cursor using maxAwaitTimeMS for 3.2 or higher'] = {
+  // Add a tag that our runner can trigger on
+  // in this case we are setting that node needs to be higher than 0.10.X to run
+  metadata: { requires: { topology: ['single'], mongodb: ">3.1.9" } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1, auto_reconnect:false});
+    db.open(function(err, db) {
+      var options = { capped: true, size: 8};
+      db.createCollection('should_await_data_max_awaittime_ms', options, function(err, collection) {
+        collection.insert({a:1}, configuration.writeConcernMax(), function(err, result) {
+          var s = new Date();
+          // Create cursor with awaitdata, and timeout after the period specified
+          var cursor = collection.find({})
+            .addCursorFlag('tailable', true)
+            .addCursorFlag('awaitData', true)
+            .maxAwaitTimeMS(500);
+
+          cursor.each(function(err, result) {
+            if(result) {
+              setTimeout(function() {
+                cursor.kill();
+              }, 300)
+            } else {
+              test.ok((new Date().getTime() - s.getTime()) >= 500);
+              db.close();
+              test.done();
+            }
+          });
+        });
+      });
+    });
+  }
+}
+
+/**
+ * @ignore
+ * @api private
+ */
+exports['Should not emit any events after close event emitted due to cursor killed'] = {
+  // Add a tag that our runner can trigger on
+  // in this case we are setting that node needs to be higher than 0.10.X to run
+  metadata: { requires: { topology: ['single', 'replicaset', 'ssl', 'heap', 'wiredtiger'] } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
+    db.open(function(err, db) {
+      test.equal(null, err);
+
+      var collection = db.collection('cursor_limit_skip_correctly');
+
+      // Insert x number of docs
+      var ordered = collection.initializeUnorderedBulkOp();
+
+      for(var i = 0; i < 100; i++) {
+        ordered.insert({a:i});
+      }
+
+      ordered.execute({w:1}, function(err, r) {
+        test.equal(null, err);
+
+        // Let's attempt to skip and limit
+        var cursor = collection.find({}).batchSize(10);
+        cursor.on('data', function() {
+          // console.log("------------- received data")
+          cursor.destroy();
+        });
+
+        cursor.on('close', function() {
+          // console.log("------------- received close")
+          db.close();
+          test.done();
+        })
+
+        cursor.on('end', function() {
+          // console.log("------------- received end")
+        })
+      });
     });
   }
 }

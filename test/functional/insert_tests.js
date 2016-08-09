@@ -54,6 +54,8 @@ exports.shouldCorrectlyPerformSingleInsert = {
     db.open(function(err, db) {
       var collection = db.collection('shouldCorrectlyPerformSingleInsert');
       collection.insert({a:1}, configuration.writeConcernMax(), function(err, result) {
+        test.equal(null, err);
+
         collection.findOne(function(err, item) {
           test.equal(1, item.a);
           db.close();
@@ -81,6 +83,13 @@ exports.shouldCorrectlyHandleMultipleDocumentInsert = {
       var docs = [{a:1}, {a:2}];
 
       collection.insert(docs, configuration.writeConcernMax(), function(err, r) {
+        test.equal(2, r.result.n);
+        test.equal(2, r.ops.length);
+        test.equal(2, r.insertedCount);
+        test.equal(2, r.insertedIds.length);
+        test.ok(r.insertedIds[0] instanceof ObjectID);
+        test.ok(r.insertedIds[1] instanceof ObjectID);
+
         r.ops.forEach(function(doc) {
           test.ok(((doc['_id']) instanceof ObjectID || Object.prototype.toString.call(doc['_id']) === '[object ObjectID]'));
         });
@@ -1337,20 +1346,14 @@ exports.executesCallbackOnceWithOveriddenDefaultDbWriteConcern = {
   // The actual test we wish to run
   test: function(configuration, test) {
     function cb (err) {
-      cb.called++;
-      test.equal(1, cb.called);
+      db.close();
+      test.done();
     }
-    cb.called = 0;
 
     var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
     db.open(function(err, db) {
       var collection = db.collection('gh-completely2');
       collection.insert({ a: 1 }, { w: 0 }, cb);
-
-      setTimeout(function(){
-        db.close();
-        test.done();
-      }, 100)
     });
   }
 }
@@ -1366,22 +1369,15 @@ exports.executesCallbackOnceWithOveriddenDefaultDbWriteConcernWithUpdate = {
   // The actual test we wish to run
   test: function(configuration, test) {
     function cb (err) {
-      console.dir(err)
       test.equal(null, err);
-      cb.called++;
-      test.equal(1, cb.called);
+      db.close();
+      test.done();
     }
-    cb.called = 0;
 
     var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
     db.open(function(err, db) {
       var collection = db.collection('gh-completely3');
       collection.update({ a: 1 }, {a:2}, { upsert:true, w: 0 }, cb);
-
-      setTimeout(function(){
-        db.close();
-        test.done();
-      }, 100)
     });
   }
 }
@@ -1398,20 +1394,14 @@ exports.executesCallbackOnceWithOveriddenDefaultDbWriteConcernWithRemove = {
   test: function(configuration, test) {
     function cb (err) {
       test.equal(null, err);
-      cb.called++;
-      test.equal(1, cb.called);
+      db.close();
+      test.done();
     }
-    cb.called = 0;
 
     var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
     db.open(function(err, db) {
       var collection = db.collection('gh-completely1');
       collection.remove({ a: 1 }, { w: 0 }, cb);
-
-      setTimeout(function(){
-        db.close();
-        test.done();
-      }, 100);
     });
   }
 }
@@ -1476,6 +1466,8 @@ exports.handleBSONTypeInsertsCorrectly = {
                     test.ok(doc.maxkey instanceof MaxKey);
 
                     collection.findOne({"code": new Code("function () {}", {a: 77})}, function(err, doc) {
+                      console.dir(err)
+                      console.dir(doc)
                       test.equal(null, err);
                       test.ok(doc != null);
                       db.close();
@@ -1748,6 +1740,42 @@ exports.shouldCorrectlyHonorPromoteLongFalseNativeBSON = {
             test.equal(null, err);
             test.ok(doc.doc instanceof Long);
             test.ok(doc.array[0][0] instanceof Long);
+            db.close();
+            test.done();
+          });
+      });
+    });
+  }
+}
+
+exports.shouldCorrectlyHonorPromoteLongFalseNativeBSONWithGetMore = {
+  // Add a tag that our runner can trigger on
+  // in this case we are setting that node needs to be higher than 0.10.X to run
+  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var Long = configuration.require.Long;
+
+    var o = configuration.writeConcernMax();
+    o.promoteLongs = false;
+    var db = configuration.newDbInstance(o, {native_parser:true})
+    db.open(function(err, db) {
+      db.collection('shouldCorrectlyHonorPromoteLongFalseNativeBSONWithGetMore').insertMany([
+        {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)},
+        {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)},
+        {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)},
+        {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)},
+        {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)},
+        {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)}, {a: Long.fromNumber(10)},
+      ], function(err, doc) {
+          test.equal(null, err);
+
+          db.collection('shouldCorrectlyHonorPromoteLongFalseNativeBSONWithGetMore').find({}).batchSize(2).toArray(function(err, docs) {
+            test.equal(null, err);
+            var doc = docs.pop();
+
+            test.ok(doc.a instanceof Long);
             db.close();
             test.done();
           });
@@ -2107,6 +2135,7 @@ exports['Correctly allow forceServerObjectId for insertOne'] = {
       test.equal(null, err);
 
       db.collection('apm_test').insertOne({a:1}, {forceServerObjectId:true}).then(function(r) {
+        // console.dir(r)
         test.equal(null, err);
         test.equal(undefined, started[0].command.documents[0]._id);
         listener.uninstrument();
@@ -2219,7 +2248,7 @@ exports['Insert document including sub documents'] = {
 
       db.collection('sub_documents').insertOne(doc, function(err, r) {
         test.equal(null, err);
-        
+
         db.collection('sub_documents').find({}).next(function(err, v) {
           test.equal(null, err);
           test.equal('a', v.products[0].suppliers[0].shipments[0].shipment1);
@@ -2231,10 +2260,3 @@ exports['Insert document including sub documents'] = {
     });
   }
 }
-
-
-
-
-
-
-

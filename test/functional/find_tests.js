@@ -947,13 +947,13 @@ exports['Should correctly pass timeout options to cursor'] = {
     db.open(function(err, db) {
       db.createCollection('timeoutFalse', function(err, collection) {
         collection.find({},{timeout:false},function(err, cursor) {
-          test.equal(false, cursor.timeout);
+          test.equal(false, cursor.s.cmd.noCursorTimeout);
 
           collection.find({},{timeout:true},function(err, cursor) {
-            test.equal(true, cursor.timeout);
+            test.equal(true, cursor.s.cmd.noCursorTimeout);
 
             collection.find({},{},function(err, cursor) {
-              test.equal(false, cursor.timeout);
+              test.ok(!cursor.s.cmd.noCursorTimeout);
 
               db.close();
               test.done();
@@ -1682,39 +1682,6 @@ exports.shouldPerformQueryWithBatchSizeDifferentToStandard = {
   }
 }
 
-// /**
-//  * A simple query with a different batchSize
-//  */
-// exports.shouldQueryCurrentOperation = {
-//   metadata: {
-//     requires: {
-//       topology: ["single", "replicaset"]
-//     }
-//   },
-//
-//   // The actual test we wish to run
-//   test: function(configuration, test) {
-//     var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1, auto_reconnect:false});
-//
-//     // Establish connection to db
-//     db.open(function(err, db) {
-//
-//       // Create a collection we want to drop later
-//       db.collection('$cmd.sys.inprog', function(err, collection) {
-//         // Peform a simple find and return all the documents
-//         collection.find({}).toArray(function(err, docs) {
-//           console.log("============================================")
-//           console.dir(err)
-//           console.dir(docs)
-//           test.ok(Array.isArray(docs[0].inprog));
-//           db.close();
-//           test.done();
-//         });
-//       });
-//     });
-//   }
-// }
-
 /**
  * A simple query with negative limit
  */
@@ -2351,7 +2318,6 @@ exports['should execute query using batchSize of 0'] = {
 
           // Ensure correct insertion testing via the cursor and the count function
           collection.find().batchSize(-5).toArray(function(err, documents) {
-            console.dir(err)
             test.equal(null, err);
             test.equal(3, documents.length);
             // Let's close the db
@@ -2387,6 +2353,96 @@ exports['should execute query using limit of 0'] = {
             test.equal(null, err);
             test.equal(3, documents.length);
 
+            // Let's close the db
+            db.close();
+            test.done();
+          });
+        });
+      });
+    });
+  }
+}
+
+/**
+ * Test a simple find
+ * @ignore
+ */
+exports['should execute query using $elemMatch'] = {
+  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
+    db.open(function(err, db) {
+      var collection = db.collection('elem_match_test', function(err, collection) {
+        var doc1 = null;
+        var doc2 = null;
+
+        // Insert some test documents
+        collection.insert([{ _id: 1, results: [ 82, 85, 88 ] },
+          { _id: 2, results: [ 75, 88, 89 ] }], configuration.writeConcernMax(), function(err, r) {
+
+          // Ensure correct insertion testing via the cursor and the count function
+          collection.find({ results: { $elemMatch: { $gte: 80, $lt: 85 } } }).toArray(function(err, documents) {
+            test.equal(null, err);
+            test.deepEqual([ { _id: 1, results: [ 82, 85, 88 ] } ], documents);
+
+            // Let's close the db
+            db.close();
+            test.done();
+          });
+        });
+      });
+    });
+  }
+}
+
+/**
+ * Test a simple find
+ * @ignore
+ */
+exports['should execute query using limit of 101'] = {
+  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1});
+    db.open(function(err, db) {
+      var collection = db.collection('test_find_simple_limit_101', function(err, collection) {
+        function clone(obj) {
+          var o = {};
+          for(var name in obj) o[name] = obj[name];
+          return o;
+        }
+
+        var template = {
+          "linkid": "12633170",
+          "advertisercid": "4612127",
+          "websitename": "Car Rental 8",
+          "destinationurl": "https://www.carrental8.com/en/",
+          "who": "8027061-12633170-1467924618000",
+          "href": "http://www.tkqlhce.com",
+          "src": "http://www.awltovhc.com",
+          "r1": 3,
+          "r2": 44,
+          "r3": 24,
+          "r4": 58
+        }
+
+        var docs = [];
+        for(var i = 0; i < 1000; i++) {
+          docs.push(clone(template));
+        }
+
+        console.log("==================================== 0")
+        // Insert some test documents
+        collection.insertMany(docs, configuration.writeConcernMax(), function(err, r) {
+          console.log("==================================== 1")
+          // Ensure correct insertion testing via the cursor and the count function
+          collection.find().limit(200).toArray(function(err, documents) {
+            console.log("==================================== 2")
+            // test.equal(null, err);
+            // test.equal(3, documents.length);
             // Let's close the db
             db.close();
             test.done();

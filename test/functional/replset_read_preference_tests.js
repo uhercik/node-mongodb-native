@@ -4,24 +4,18 @@ var format = require('util').format
   , fs = require('fs');
 
 var restartAndDone = function(configuration, test) {
-  configuration.manager.restart(function() {
-    test.done();
-  });
+  test.done();
 }
 
 exports.beforeTests = function(configuration, callback) {
-  configuration.restart({purge:false, kill:true}, function() {
+  configuration.manager.restart().then(function() {
     callback();
   });
 }
 
-// exports.afterTests = function(configuration, callback) {
-//   callback();
-// }
-
 exports['Should Correctly Pick lowest ping time'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -39,7 +33,7 @@ exports['Should Correctly Pick lowest ping time'] = {
         new Server(configuration.host, configuration.port + 1),
         new Server(configuration.host, configuration.port + 2)
       ],
-      {strategy:'ping', secondaryAcceptableLatencyMS: 5, rs_name:configuration.replicasetName, debug:true}
+      {secondaryAcceptableLatencyMS: 5, rs_name:configuration.replicasetName, debug:true}
     );
 
     // Open the database
@@ -52,75 +46,99 @@ exports['Should Correctly Pick lowest ping time'] = {
 
         var time = 10;
 
-        // Nearest strategy
-        var nearest = db.serverConfig.replset.readPreferenceStrategies['nearest'];
+        // // Nearest strategy
+        // var nearest = db.serverConfig.replset.readPreferenceStrategies['nearest'];
 
         // Sorted by time
         var byTime = [];
+        // console.log("============== server servers")
+        var byTime = db.serverConfig.replset.getServers({ignoreArbiters:true});
+        byTime.forEach(function(s) {
+          s.lastIsMasterMS = time;
+          time = time + 10;
+        });
 
-        // Set the ping times
-        var keys = Object.keys(nearest.data);
-        for(var i = 0; i < keys.length; i++) {
-          nearest.data[keys[i]] = time;
-          if(keys[i] != result.primary)
-            byTime.push(keys[i]);
-          time += 10;
-        }
+        // console.dir(result)
 
-        // Set primary to the highest ping time
-        nearest.data[result.primary] = time;
-        byTime.push(result.primary);
+        // // Set the ping times
+        // var keys = Object.keys(nearest.data);
+        // for(var i = 0; i < keys.length; i++) {
+        //   nearest.data[keys[i]] = time;
+        //   if(keys[i] != result.primary)
+        //     byTime.push(keys[i]);
+        //   time += 10;
+        // }
+
+        // // Set primary to the highest ping time
+        // nearest.data[result.primary] = time;
+        // byTime.push(result.primary);
+        //
 
         var secondaries = [];
-        result.hosts.forEach(function(s) {
+        var hosts = result.hosts.concat(result.passives || []);
+        hosts.forEach(function(s) {
           if(result.primary != s && result.arbiters.indexOf(s) == -1)
             secondaries.push(s);
         });
 
-        // Last server picked
-        var lastServer = null;
+        // // Last server picked
+        // var lastServer = null;
 
         // Pick the server
         db.serverConfig.replset.once('pickedServer', function(readPreference, server) {
-          test.equal(byTime[0], server.name);
+          // console.log("======================== 1")
+          // console.log(" byTime[0].name = " + byTime[0].name)
+          // console.log(" server.name = " + server.name)
+          test.equal(byTime[0].name, server.name);
         });
 
+        // console.log("======================== 0")
         // Attempt to perform a read
         db.collection('somecollection').findOne({}, {readPreference: new ReadPreference(ReadPreference.NEAREST)}, function(err, doc) {
-          test.equal(null, err);          
+          // console.log("======================== 2")
+          test.equal(null, err);
 
           // Pick the server
           db.serverConfig.replset.once('pickedServer', function(readPreference, server) {
+            // console.log("======================== 3")
             test.ok(secondaries.indexOf(server.name) != -1);
           });
 
           // Attempt to perform a read
           db.collection('somecollection').findOne({}, {readPreference: new ReadPreference(ReadPreference.SECONDARY)}, function(err, doc) {
-            test.equal(null, err);          
+            // console.log("======================== 4")
+            test.equal(null, err);
 
             // Pick the server
             db.serverConfig.replset.once('pickedServer', function(readPreference, server) {
+              // console.log("======================== 5")
+              // console.dir(secondaries)
+              // console.dir(server.name)
+              // process.exit(0)
               // test.equal('localhost:31001', server.name);
               test.ok(secondaries.indexOf(server.name) != -1);
             });
 
             // Attempt to perform a read
             db.collection('somecollection').findOne({}, {readPreference: new ReadPreference(ReadPreference.SECONDARY_PREFERRED)}, function(err, doc) {
-              test.equal(null, err);          
+              // console.log("======================== 6")
+              test.equal(null, err);
 
               // Pick the server
               db.serverConfig.replset.once('pickedServer', function(readPreference, server) {
+                // console.log("======================== 6")
                 test.equal('localhost:31000', server.name);
               });
 
               // Attempt to perform a read
               db.collection('somecollection').findOne({}, {readPreference: new ReadPreference(ReadPreference.PRIMARY)}, function(err, doc) {
-                test.equal(null, err);          
+                // console.log("======================== 8")
+                test.equal(null, err);
 
                 // Close db
                 db.close();
-                restartAndDone(configuration, test);           
-              });                
+                restartAndDone(configuration, test);
+              });
             });
           });
         });
@@ -135,7 +153,7 @@ exports['Should Correctly Pick lowest ping time'] = {
 
 exports['Should Correctly vary read server when using readpreference NEAREST'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -159,8 +177,6 @@ exports['Should Correctly vary read server when using readpreference NEAREST'] =
     // Open the database
     var db = new Db('integration_test_', replSet, {w:1, readPreference: ReadPreference.NEAREST});
     db.on("fullsetup", function() {
-      // Nearest strategy
-      var nearest = db.serverConfig.replset.readPreferenceStrategies['nearest'];
       // Servers viewed
       var viewedServers = {};
 
@@ -207,7 +223,7 @@ exports['Should Correctly vary read server when using readpreference NEAREST'] =
  */
 exports.shouldCorrectlyReadFromGridstoreWithSecondaryReadPreference = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var GridStore = configuration.require.GridStore
@@ -253,7 +269,7 @@ exports.shouldCorrectlyReadFromGridstoreWithSecondaryReadPreference = {
           // Write the file using write
           gridStore.write(data, function(err, doc) {
             test.equal(null, err);
-        
+
             gridStore.close(function(err, doc) {
               test.equal(null, err);
 
@@ -262,7 +278,6 @@ exports.shouldCorrectlyReadFromGridstoreWithSecondaryReadPreference = {
                 test.ok(secondaries[server.name] != null);
               });
 
-              // setTimeout(function() {
               // Read the file using readBuffer
               new GridStore(db, doc._id, 'r', {readPreference:ReadPreference.SECONDARY}).open(function(err, gridStore) {
                 test.equal(null, err);
@@ -274,8 +289,6 @@ exports.shouldCorrectlyReadFromGridstoreWithSecondaryReadPreference = {
                   restartAndDone(configuration, test);
                 })
               });
-
-            // }, 10000)
             });
           })
         });
@@ -293,7 +306,7 @@ exports.shouldCorrectlyReadFromGridstoreWithSecondaryReadPreference = {
  */
 exports['Connection to replicaset with primary read preference'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -349,7 +362,7 @@ exports['Connection to replicaset with primary read preference'] = {
  */
 exports['Should Set read preference at collection level using collection method'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -411,7 +424,7 @@ exports['Should Set read preference at collection level using collection method'
  */
 exports['Should Set read preference at collection level using createCollection method'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -443,14 +456,14 @@ exports['Should Set read preference at collection level using createCollection m
         });
 
         // Grab the collection
-        db.createCollection("read_preferences_all_levels_0", {readPreference:ReadPreference.SECONDARY}, function(err, collection) {
-          test.equal(null, err);    
+        db.createCollection("read_preferences_all_levels_1", {readPreference:ReadPreference.SECONDARY}, function(err, collection) {
+          test.equal(null, err);
 
           // Pick the server
           db.serverConfig.replset.once('pickedServer', function(readPreference, server) {
             test.ok(secondaries[server.name] != null);
           });
-          
+
           var cursor = collection.find();
           // Attempt to read (should fail due to the server not being a primary);
           cursor.toArray(function(err, items) {
@@ -475,7 +488,7 @@ exports['Should Set read preference at collection level using createCollection m
  */
 exports['Should Set read preference at cursor level'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -536,7 +549,7 @@ exports['Should Set read preference at cursor level'] = {
  */
 exports['Attempt to change read preference at cursor level after object read legacy'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -576,7 +589,9 @@ exports['Attempt to change read preference at cursor level after object read leg
               // Try to change the read preference it should not work as the query was executed
               cursor.setReadPreference(ReadPreference.PRIMARY);
               test.ok(false);
-            } catch(err) {}
+            } catch(err) {
+              // console.log(err.stack)
+            }
 
             test.equal(ReadPreference.SECONDARY, cursor.readPreference.preference);
           }
@@ -591,7 +606,7 @@ exports['Attempt to change read preference at cursor level after object read leg
  */
 exports['Set read preference at db level'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -619,22 +634,29 @@ exports['Set read preference at db level'] = {
     // Connect to the db
     db.on("fullsetup", function() {
       db.command({ismaster:true}, function(err, result) {
+        // console.log("--------------- 0")
         // Filter out the secondaries
         var secondaries = {};
-        result.hosts.forEach(function(s) {
+        var hosts = result.hosts.concat(result.passives || []);
+        hosts.forEach(function(s) {
           if(result.primary != s && result.arbiters.indexOf(s) == -1)
             secondaries[s] = s;
         });
+        // console.log("--------------- 1")
 
         db.serverConfig.replset.once('pickedServer', function(readPreference, server) {
+          // console.log("--------------- 4")
           test.ok(secondaries[server.name] != null);
         });
+        // console.log("--------------- 2")
 
         // Grab the collection
-        var collection = db.collection("read_preferences_all_levels_0");
+        var collection = db.collection("read_preferences_all_levels_2");
         // Attempt to read (should fail due to the server not being a primary);
         var cursor = collection.find()
+        // console.log("--------------- 3")
         cursor.toArray(function(err, items) {
+          // console.log("--------------- 5")
           // Does not get called or we don't care
           test.equal(ReadPreference.SECONDARY, cursor.readPreference.preference)
           db.close();
@@ -655,7 +677,7 @@ exports['Set read preference at db level'] = {
  */
 exports['Set read preference at collection level using collection method'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -691,7 +713,7 @@ exports['Set read preference at collection level using collection method'] = {
         });
 
         // Grab the collection
-        var collection = db.collection("read_preferences_all_levels_0", {readPreference:new ReadPreference(ReadPreference.SECONDARY)});
+        var collection = db.collection("read_preferences_all_levels_3", {readPreference:new ReadPreference(ReadPreference.SECONDARY)});
         // Attempt to read (should fail due to the server not being a primary);
         var cursor = collection.find()
         cursor.toArray(function(err, items) {
@@ -715,7 +737,7 @@ exports['Set read preference at collection level using collection method'] = {
  */
 exports['Ensure tag read goes only to the correct server'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -760,7 +782,7 @@ exports['Ensure tag read goes only to the correct server'] = {
  */
 exports['Ensure tag read goes only to the correct servers using nearest'] = {
   metadata: { requires: { topology: 'replicaset' } },
-  
+
   // The actual test we wish to run
   test: function(configuration, test) {
     var mongo = configuration.require
@@ -845,12 +867,74 @@ exports['Always uses primary readPreference for findAndModify'] = {
   }
 }
 
+/**
+ * @ignore
+ */
+exports['should correctly apply read preference for direct secondary connection'] = {
+  metadata: { requires: { topology: 'replicaset' } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var mongo = configuration.require
+      , MongoClient = mongo.MongoClient
+      , Db = mongo.Db
+      , ReplSet = mongo.ReplSet
+      , Server = mongo.Server
+      , ReadPreference = mongo.ReadPreference;
+
+    // Replica configuration
+    var replSet = new ReplSet([
+        new Server(configuration.host, configuration.port),
+        new Server(configuration.host, configuration.port + 1),
+        new Server(configuration.host, configuration.port + 2)
+      ],
+      {readPreference: ReadPreference.NEAREST, rs_name:configuration.replicasetName, debug:true}
+    );
+
+    // Create an id
+    var db = null;
+    // Open the database
+    var db = new Db('integration_test_', replSet, {w:'majority', wtimeout: 10000});
+    db.on("fullsetup", function() {
+
+      db.collection('direct_secondary_read_test').insertMany([{a:1}, {a:1}, {a:1}, {a:1}], configuration.writeConcernMax(), function(err, r) {
+        test.equal(null, err);
+        db.close();
+
+        setTimeout(function() {
+          var url = format("mongodb://localhost:%s/integration_test_?readPreference=nearest"
+            , configuration.port + 1);
+          // console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! CONNECT")
+          // Connect using the MongoClient
+          MongoClient.connect(url, function(err, db){
+            test.equal(null, err);
+            test.ok(db.serverConfig instanceof Server);
+
+            db.collection('direct_secondary_read_test').count(function(err, n) {
+              test.equal(null, err);
+              test.ok(n > 0);
+
+              // console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! CONNECT DONE")
+              db.close();
+              test.done();
+            });
+          });
+        }, 1000);
+      });
+    });
+
+    db.open(function(err, p_db) {
+      db = p_db;
+    });
+  }
+}
+
 // /**
 //  * @ignore
 //  */
 // exports['should correctly list Collections on secondary'] = {
 //   metadata: { requires: { topology: 'replicaset' } },
-  
+
 //   // The actual test we wish to run
 //   test: function(configuration, test) {
 //     var mongo = configuration.require
@@ -870,7 +954,7 @@ exports['Always uses primary readPreference for findAndModify'] = {
 
 //         db.collection("replicaset_slave_ok").insert({testfield:123}, function(err, result) {
 //           test.equal(null, err);
-          
+
 //           db.listCollections().toArray(function(err, docs) {
 //             console.log("-----------------------------------------------")
 //             console.dir(err)

@@ -251,7 +251,7 @@ exports.shouldCorrectlyHandleMultipleChunkGridStore = {
       var gridStore = new GridStore(fs_client, "test_gs_multi_chunk", "w");
       gridStore.open(function(err, gridStore) {
         test.equal(null, err);
-        
+
         gridStore.chunkCollection().deleteMany({}, function(err) {
           gridStore.chunkSize = 512;
           var file1 = ''; var file2 = ''; var file3 = '';
@@ -264,13 +264,13 @@ exports.shouldCorrectlyHandleMultipleChunkGridStore = {
 
             gridStore.write(file2, function(err, gridStore) {
               test.equal(null, err);
-  
+
               gridStore.write(file3, function(err, gridStore) {
                 test.equal(null, err);
-    
+
                 gridStore.close(function(err, result) {
                   test.equal(null, err);
-      
+
                   fs_client.collection('fs.chunks', function(err, collection) {
                     test.equal(null, err);
 
@@ -369,7 +369,7 @@ exports.shouldCorrectlyUnlinkAnArrayOfFiles = {
       gridStore.open(function(err, gridStore) {
         fs_client.collection('fs.files').deleteMany({}, function() {
           fs_client.collection('fs.chunks').deleteMany({}, function() {
-            
+
             gridStore.write("hello, world!", function(err, gridStore) {
               gridStore.close(function(err, result) {
                 fs_client.collection('fs.files', function(err, collection) {
@@ -467,12 +467,13 @@ exports.shouldCorrectlyWriteFileToGridStoreUsingObjectId = {
       gridStore.open(function(err, gridStore) {
         gridStore.writeFile('./test/functional/data/test_gs_weird_bug.png', function(err, doc) {
 
-          GridStore.read(db, doc._id, function(err, fileData) {
+          GridStore.read(db, doc.fileId, function(err, fileData) {
+            console.dir(err)
             test.equal(data.toString('base64'), fileData.toString('base64'));
             test.equal(fileSize, fileData.length);
 
             // Ensure we have a md5
-            var gridStore2 = new GridStore(db, doc._id, 'r');
+            var gridStore2 = new GridStore(db, doc.fileId, 'r');
             gridStore2.open(function(err, gridStore2) {
               test.ok(gridStore2.md5 != null)
               db.close();
@@ -573,7 +574,7 @@ exports.shouldCorrectlyPerformWorkingFiledReadWithChunkSizeLessThanFileSize = {
  * @ignore
  */
 exports.shouldCorrectlyPerformWorkingFiledWithBigFile = {
-  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] } },
+  metadata: { requires: { topology: ['single', 'replicaset', 'sharded', 'ssl', 'heap', 'wiredtiger'] }, mongodb: ">=2.6.0", ignore: { travis:true } },
 
   // The actual test we wish to run
   test: function(configuration, test) {
@@ -617,6 +618,8 @@ exports.shouldCorrectlyPerformWorkingFiledWithBigFile = {
         file.on('close', function () {
           // Flush the remaining data to GridFS
           gridStore.close(function(err, result) {
+            test.equal(null, err);
+
             // Read in the whole file and check that it's the same content
             GridStore.read(client, result._id, function(err, fileData) {
               var data = fs.readFileSync('./test_gs_working_field_read.tmp');
@@ -2517,12 +2520,12 @@ exports.shouldCorrectlyReportIllegalMode = {
     db.open(function(err, db) {
       var gridStore = new GridStore(db, "test_gs_unknown_mode", "x");
       try {
-        gridStore.open(function(err, gridStore) {});        
+        gridStore.open(function(err, gridStore) {});
       } catch(err) {
         test.ok(err instanceof Error);
         test.equal("Illegal mode x", err.message);
         db.close();
-        test.done();        
+        test.done();
       }
     });
   }
@@ -2884,7 +2887,7 @@ exports['should correctly pipe through multiple pipelines'] = {
     // Connection URL
     var url = 'mongodb://localhost:27017/myproject';
     // Use connect method to connect to the Server
-    MongoClient.connect(configuration.url(), function(err, db) {
+    MongoClient.connect(configuration.url(), {server: {sslValidate: false}}, function(err, db) {
       assert.equal(null, err);
 
       // Set up gridStore
@@ -2930,7 +2933,7 @@ exports['should correctly seek on file where size of file is a multiple of the c
     // Connection URL
     var url = 'mongodb://localhost:27017/myproject';
     // Use connect method to connect to the Server
-    MongoClient.connect(configuration.url(), function(err, db) {
+    MongoClient.connect(configuration.url(), {server: {sslValidate: false}}, function(err, db) {
       assert.equal(null, err);
 
       var gridStore = new GridStore(db, "test_gs_multi_chunk_exact_size", "w");
@@ -3000,7 +3003,7 @@ exports['should correctly seek on file where size of file is a multiple of the c
     var id = new ObjectID();
 
     // Use connect method to connect to the Server
-    MongoClient.connect(configuration.url(), function(err, db) {
+    MongoClient.connect(configuration.url(), {server: {sslValidate: false}}, function(err, db) {
       assert.equal(null, err);
 
       var gridStore = new GridStore(db, id, "w");
@@ -3086,7 +3089,7 @@ exports['should correctly write fake png to gridstore'] = {
     var buffer = new Buffer(200033);
 
     // Use connect method to connect to the Server
-    MongoClient.connect(configuration.url(), function(err, db) {
+    MongoClient.connect(configuration.url(), {server: {sslValidate: false}}, function(err, db) {
       assert.equal(null, err);
 
       var gridStore = new GridStore(db, new ObjectID(), 'w', { "content_type": "image/png", "chunk_size": 1024*4 });
@@ -3095,10 +3098,64 @@ exports['should correctly write fake png to gridstore'] = {
 
         gridStore.write(buffer, function(err, result) {
           test.equal(null, err);
-  
-          gridStore.close(function(err, result) { 
+
+          gridStore.close(function(err, result) {
             test.equal(null, err);
 
+            db.close();
+            test.done();
+          });
+        });
+      });
+    });
+  }
+}
+
+exports['should not attempt to delete chunks when no file exists'] = {
+  // Add a tag that our runner can trigger on
+  // in this case we are setting that node needs to be higher than 0.10.X to run
+  metadata: { requires: { topology: ['single'] } },
+
+  // The actual test we wish to run
+  test: function(configuration, test) {
+    var MongoClient = configuration.require.MongoClient
+      , GridStore = configuration.require.GridStore
+      , ObjectID = configuration.require.ObjectID;
+
+    var db = configuration.newDbInstance(configuration.writeConcernMax(), {poolSize:1, auto_reconnect:false});
+    var started = [];
+    var succeeded = [];
+    var failed = [];
+
+    // Create a test buffer
+    var buffer = new Buffer(2000);
+
+    // Establish connection to db
+    db.open(function(err, db) {
+      test.equal(null, err);
+
+      var listener = require('../..').instrument(function(err, instrumentations) {});
+      listener.on('started', function(event) {
+        if(event.commandName == 'delete')
+          started.push(event);
+      });
+
+      listener.on('succeeded', function(event) {
+        if(event.commandName == 'delete')
+          succeeded.push(event);
+      });
+
+      var gridStore = new GridStore(db, new ObjectID(), 'w', { "content_type": "image/png", "chunk_size": 1024*4 });
+      gridStore.open(function(err, gridStore) {
+        test.equal(null, err);
+
+        gridStore.write(buffer, function(err, result) {
+          test.equal(null, err);
+
+          gridStore.close(function(err, result) {
+            test.equal(null, err);
+
+            listener.uninstrument();
             db.close();
             test.done();
           });

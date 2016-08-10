@@ -1,6 +1,6 @@
 {
   "name": "@gti/mongodb",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "description": "The official MongoDB driver for Node.js",
   "main": "index.js",
   "repository": {
